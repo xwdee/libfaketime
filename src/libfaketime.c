@@ -2742,10 +2742,20 @@ static void parse_ft_string(const char *user_faked_time)
       }
       else
       {
-        DONT_FAKE_TIME(ret = stat(getenv("FAKETIME_FOLLOW_FILE"), &master_file_stats));
+        const char *follow_file = getenv("FAKETIME_FOLLOW_FILE");
+
+        if (real_stat != NULL)
+        {
+          DONT_FAKE_TIME(ret = (*real_stat)(follow_file, &master_file_stats));
+        }
+        else
+        {
+          DONT_FAKE_TIME(ret = stat(follow_file, &master_file_stats));
+        }
+
         if (ret == -1)
         {
-          fprintf(stderr, "libfaketime: Cannot get timestamp of file %s as requested by %% operator.\n", getenv("FAKETIME_FOLLOW_FILE"));
+          fprintf(stderr, "libfaketime: Cannot get timestamp of file %s as requested by %% operator.\n", follow_file);
           exit(1);
         }
         else
