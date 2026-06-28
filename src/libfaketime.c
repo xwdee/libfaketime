@@ -72,6 +72,7 @@
 
 #include "uthash.h"
 
+#include "android_compat.h"
 #include "time_ops.h"
 #include "faketime_common.h"
 #include "ft_sem.h"
@@ -89,8 +90,18 @@
 #include <signal.h>
 #endif
 
+#ifdef __ANDROID__
+#include <dlfcn.h>
+struct timeb {
+  time_t time;
+  unsigned short millitm;
+  short timezone;
+  short dstflag;
+};
+#else
 #include <sys/timeb.h>
 #include <dlfcn.h>
+#endif
 
 #define BUFFERLEN   256
 
@@ -98,6 +109,8 @@
 extern char *__progname;
 #ifdef __sun
 #include "sunos_endian.h"
+#elif defined(__ANDROID__)
+#include <sys/endian.h>
 #else
 #include <endian.h>
 #endif
@@ -205,22 +218,28 @@ static __thread bool dont_fake = false;
 static int          (*real_stat)            (const char *, struct stat *);
 static int          (*real_fstat)           (int, struct stat *);
 static int          (*real_lstat)           (const char *, struct stat *);
+#ifndef __ANDROID__
 static int          (*real_xstat)           (int, const char *, struct stat *);
 static int          (*real_fxstat)          (int, int, struct stat *);
 static int          (*real_fxstatat)        (int, int, const char *, struct stat *, int);
 static int          (*real_lxstat)          (int, const char *, struct stat *);
+#endif
 #if !defined(__APPLE__) || !__DARWIN_ONLY_64_BIT_INO_T
+#ifndef __ANDROID__
 static int          (*real_stat64)          (const char *, struct stat64 *);
 static int          (*real_xstat64)         (int, const char *, struct stat64 *);
 static int          (*real_fxstat64)        (int, int , struct stat64 *);
 static int          (*real_fxstatat64)      (int, int , const char *, struct stat64 *, int);
 static int          (*real_lxstat64)        (int, const char *, struct stat64 *);
 #endif
+#endif
 #ifdef STATX_TYPE
 static int          (*real_statx)           (int dirfd, const char *pathname, int flags, unsigned int mask, struct statx *statxbuf);
 #endif
 static time_t       (*real_time)            (time_t *);
+#ifndef __ANDROID__
 static int          (*real_ftime)           (struct timeb *);
+#endif
 static int          (*real_gettimeofday)    (struct timeval *, void *);
 static int          (*real_clock_gettime)   (clockid_t clk_id, struct timespec *tp);
 static int          (*real_clock_gettime64) (clockid_t clk_id, struct __timespec64 *tp);
@@ -228,7 +247,9 @@ static int          (*real_clock_gettime64) (clockid_t clk_id, struct __timespec
 static int          (*real_timespec_get)    (struct timespec *ts, int base);
 #endif
 #ifdef FAKE_INTERNAL_CALLS
+#ifndef __ANDROID__
 static int          (*real___ftime)           (struct timeb *);
+#endif
 static int          (*real___gettimeofday)    (struct timeval *, void *);
 static int          (*real___clock_gettime)   (clockid_t clk_id, struct timespec *tp);
 #endif
@@ -242,6 +263,7 @@ static pthread_rwlock_t monotonic_conds_lock;
 
 #ifndef __APPLE__
 #ifdef FAKE_TIMERS
+#ifndef __ANDROID__
 static int          (*real_timer_settime_22)   (int timerid, int flags, const struct itimerspec *new_value,
                                                 struct itimerspec * old_value);
 static int          (*real_timer_settime_233)  (timer_t timerid, int flags,
@@ -251,6 +273,13 @@ static int          (*real_timer_gettime_22)   (int timerid,
                                                 struct itimerspec *curr_value);
 static int          (*real_timer_gettime_233)  (timer_t timerid,
                                                 struct itimerspec *curr_value);
+#else
+static int          (*real_timer_settime_233)  (timer_t timerid, int flags,
+                                                const struct itimerspec *new_value,
+                                                struct itimerspec * old_value);
+static int          (*real_timer_gettime_233)  (timer_t timerid,
+                                                struct itimerspec *curr_value);
+#endif
 static int          (*real_timerfd_settime)    (int fd, int flags,
                                                 const struct itimerspec *new_value,
                                                 struct itimerspec *old_value);
@@ -284,7 +313,9 @@ static int          (*real_pselect)         (int nfds, fd_set *restrict readfds,
                                              const sigset_t *sigmask);
 #endif
 static int          (*real_sem_timedwait)   (sem_t*, const struct timespec*);
+#ifndef __ANDROID__
 static int          (*real_sem_clockwait)   (sem_t *sem, clockid_t clockid, const struct timespec *abstime);
+#endif
 #endif
 #ifdef __APPLE__
 static int          (*real_clock_get_time)  (clock_serv_t clock_serv, mach_timespec_t *cur_timeclockid_t);
@@ -1088,7 +1119,7 @@ static inline void fake_statbuf (struct stat *buf) {
 #endif
 }
 
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(__ANDROID__)
 static inline void fake_stat64buf (struct stat64 *buf) {
 #ifndef st_atime
   lock_for_stat();
@@ -1104,7 +1135,7 @@ static inline void fake_stat64buf (struct stat64 *buf) {
   unlock_for_stat();
 #endif
 }
-#endif
+#endif /* !__APPLE__ && !__ANDROID__ */
 
 /* macOS dyld interposing uses the function's real name instead of real_name */
 #ifdef MACOS_DYLD_INTERPOSE
@@ -1184,36 +1215,44 @@ int lstat (const char *path, struct stat *buf)
 
 #ifndef __APPLE__
 /* Contributed by Philipp Hachtmann in version 0.6 */
+#ifndef __ANDROID__
 int __xstat (int ver, const char *path, struct stat *buf)
 {
   STAT_HANDLER(xstat, buf, ver, path, buf);
 }
 #endif
+#endif
 
 #ifndef __APPLE__
 /* Contributed by Philipp Hachtmann in version 0.6 */
+#ifndef __ANDROID__
 int __fxstat (int ver, int fildes, struct stat *buf)
 {
   STAT_HANDLER(fxstat, buf, ver, fildes, buf);
 }
 #endif
+#endif
 
 #ifndef __APPLE__
 /* Added in v0.8 as suggested by Daniel Kahn Gillmor */
 #ifndef NO_ATFILE
+#ifndef __ANDROID__
 int __fxstatat(int ver, int fildes, const char *filename, struct stat *buf, int flag)
 {
   STAT_HANDLER(fxstatat, buf, ver, fildes, filename, buf, flag);
 }
 #endif
 #endif
+#endif
 
 #ifndef __APPLE__
 /* Contributed by Philipp Hachtmann in version 0.6 */
+#ifndef __ANDROID__
 int __lxstat (int ver, const char *path, struct stat *buf)
 {
   STAT_HANDLER(lxstat, buf, ver, path, buf);
 }
+#endif
 
 #ifdef __GLIBC__
 int stat64 (const char *path, struct stat64 *buf)
@@ -1223,6 +1262,7 @@ int stat64 (const char *path, struct stat64 *buf)
 #endif
 
 /* Contributed by Philipp Hachtmann in version 0.6 */
+#ifndef __ANDROID__
 int __xstat64 (int ver, const char *path, struct stat64 *buf)
 {
   STAT64_HANDLER(xstat64, buf, ver, path, buf);
@@ -1247,6 +1287,7 @@ int __lxstat64 (int ver, const char *path, struct stat64 *buf)
 {
   STAT64_HANDLER(lxstat64, buf, ver, path, buf);
 }
+#endif /* __ANDROID__ */
 #endif  /* ifndef __APPLE__ */
 #endif  /* ifdef FAKE_STAT */
 
@@ -2029,6 +2070,7 @@ int sem_timedwait(sem_t *sem, const struct timespec *abs_timeout)
   return result;
 }
 
+#ifndef __ANDROID__
 /* EXPERIMENTAL */
 int sem_clockwait(sem_t *sem, clockid_t clockid, const struct timespec *abstime)
 {
@@ -2082,6 +2124,7 @@ int sem_clockwait(sem_t *sem, clockid_t clockid, const struct timespec *abstime)
   DONT_FAKE_TIME(result = (*real_sem_clockwait)(sem, clockid, real_abstime_pt));
   return result;
 }
+#endif /* __ANDROID__ */
 #endif
 
 #ifndef __APPLE__
@@ -2178,10 +2221,12 @@ timer_settime_common(timer_t_or_int timerid, int flags,
 
   switch (compat)
   {
+#ifndef __ANDROID__
     case FT_COMPAT_GLIBC_2_2:
       DONT_FAKE_TIME(result = (*real_timer_settime_22)(timerid.int_member, flags,
                     new_real_pt, old_value));
       break;
+#endif
     case FT_COMPAT_GLIBC_2_3_3:
        DONT_FAKE_TIME(result = (*real_timer_settime_233)(timerid.timer_t_member,
                     flags, new_real_pt, old_value));
@@ -2219,6 +2264,92 @@ timer_settime_common(timer_t_or_int timerid, int flags,
   return result;
 }
 
+/*
+ * Faked timer_gettime()
+ * Does not affect timer speed when stepping clock with each time() call.
+ */
+int timer_gettime_common(timer_t_or_int timerid, struct itimerspec *curr_value, ft_lib_compat_timer compat)
+{
+  int result;
+
+  ftpl_init();
+  if (real_timer_gettime_233 == NULL)
+  {
+    return -1;
+  }
+
+  switch (compat)
+  {
+#ifndef __ANDROID__
+    case FT_COMPAT_GLIBC_2_2:
+      DONT_FAKE_TIME(result = (*real_timer_gettime_22)(timerid.int_member, curr_value));
+      break;
+#endif
+    case FT_COMPAT_GLIBC_2_3_3:
+      DONT_FAKE_TIME(result = (*real_timer_gettime_233)(timerid.timer_t_member, curr_value));
+      break;
+    case FT_FD:
+       DONT_FAKE_TIME(result = (*real_timerfd_gettime)(timerid.int_member, curr_value));
+       break;
+    default:
+      result = -1;
+      break;
+  }
+
+  if (result == -1)
+  {
+    return result;
+  }
+
+  /* fake returned parts */
+  if (curr_value != NULL)
+  {
+    if (user_rate_set && !dont_fake)
+    {
+      timespecmul(&curr_value->it_interval, user_rate, &curr_value->it_interval);
+      timespecmul(&curr_value->it_value, user_rate, &curr_value->it_value);
+    }
+  }
+  /* return the result to the caller */
+  return result;
+}
+
+#ifdef __ANDROID__
+int timer_settime(timer_t timerid, int flags,
+      const struct itimerspec *new_value,
+      struct itimerspec *old_value)
+{
+  ftpl_init();
+  if (real_timer_settime_233 == NULL)
+  {
+    return -1;
+  }
+  else
+  {
+    timer_t_or_int temp;
+    temp.timer_t_member = timerid;
+    return (timer_settime_common(temp, flags, new_value, old_value,
+            FT_COMPAT_GLIBC_2_3_3, TIMER_ABSTIME));
+  }
+}
+
+int timer_gettime(timer_t timerid, struct itimerspec *curr_value)
+{
+  ftpl_init();
+  if (real_timer_gettime_233 == NULL)
+  {
+    return -1;
+  }
+  else
+  {
+    timer_t_or_int temp;
+    temp.timer_t_member = timerid;
+    return (timer_gettime_common(temp, curr_value,
+            FT_COMPAT_GLIBC_2_3_3));
+  }
+}
+
+#else
 /*
  * Faked timer_settime() compatible with implementation in GLIBC 2.2
  */
@@ -2259,54 +2390,6 @@ int timer_settime_233(timer_t timerid, int flags,
     return (timer_settime_common(temp, flags, new_value, old_value,
             FT_COMPAT_GLIBC_2_3_3, TIMER_ABSTIME));
   }
-}
-
-/*
- * Faked timer_gettime()
- * Does not affect timer speed when stepping clock with each time() call.
- */
-int timer_gettime_common(timer_t_or_int timerid, struct itimerspec *curr_value, ft_lib_compat_timer compat)
-{
-  int result;
-
-  ftpl_init();
-  if (real_timer_gettime_233 == NULL)
-  {
-    return -1;
-  }
-
-  switch (compat)
-  {
-    case FT_COMPAT_GLIBC_2_2:
-      DONT_FAKE_TIME(result = (*real_timer_gettime_22)(timerid.int_member, curr_value));
-      break;
-    case FT_COMPAT_GLIBC_2_3_3:
-      DONT_FAKE_TIME(result = (*real_timer_gettime_233)(timerid.timer_t_member, curr_value));
-      break;
-    case FT_FD:
-       DONT_FAKE_TIME(result = (*real_timerfd_gettime)(timerid.int_member, curr_value));
-       break;
-    default:
-      result = -1;
-      break;
-  }
-
-  if (result == -1)
-  {
-    return result;
-  }
-
-  /* fake returned parts */
-  if (curr_value != NULL)
-  {
-    if (user_rate_set && !dont_fake)
-    {
-      timespecmul(&curr_value->it_interval, user_rate, &curr_value->it_interval);
-      timespecmul(&curr_value->it_value, user_rate, &curr_value->it_value);
-    }
-  }
-  /* return the result to the caller */
-  return result;
 }
 
 /*
@@ -2351,6 +2434,7 @@ __asm__(".symver timer_gettime_22, timer_gettime@GLIBC_2.2");
 __asm__(".symver timer_gettime_233, timer_gettime@@GLIBC_2.3.3");
 __asm__(".symver timer_settime_22, timer_settime@GLIBC_2.2");
 __asm__(".symver timer_settime_233, timer_settime@@GLIBC_2.3.3");
+#endif /* __ANDROID__ */
 
 #ifdef __linux__
 /*
@@ -2436,9 +2520,6 @@ time_t time(time_t *time_tptr)
 
 #ifdef MACOS_DYLD_INTERPOSE
 int macos_ftime(struct timeb *tb)
-#else
-int ftime(struct timeb *tb)
-#endif
 {
   struct timespec tp;
   int result;
@@ -2451,12 +2532,35 @@ int ftime(struct timeb *tb)
   /* Check whether we've got a pointer to the real ftime() function yet */
   if (!CHECK_MISSING_REAL(ftime)) return 0;
 
-  /* initialize our TZ result with the real current time */
-#ifdef MACOS_DYLD_INTERPOSE
   DONT_FAKE_TIME(result = (*ftime)(tb));
-#else
+  if (result == -1)
+  {
+    return result;
+  }
+
+  DONT_FAKE_TIME(result = (*real_clock_gettime)(CLOCK_REALTIME, &tp));
+  if (result == -1) return -1;
+
+  (void)fake_clock_gettime(CLOCK_REALTIME, &tp);
+
+  tb->time = tp.tv_sec;
+  tb->millitm = tp.tv_nsec / 1000000;
+
+  return result;
+}
+#elif !defined(__ANDROID__)
+int ftime(struct timeb *tb)
+{
+  struct timespec tp;
+  int result;
+
+  ftpl_init();
+  if (tb == NULL)
+    return 0;
+
+  if (!CHECK_MISSING_REAL(ftime)) return 0;
+
   DONT_FAKE_TIME(result = (*real_ftime)(tb));
-#endif
   if (result == -1)
   {
     return result;
@@ -2474,11 +2578,16 @@ int ftime(struct timeb *tb)
   /* return the result to the caller */
   return result; /* will always be 0 (see manpage) */
 }
+#endif
 
 #ifdef MACOS_DYLD_INTERPOSE
 int macos_gettimeofday(struct timeval *tv, void *tz)
 #else
+#ifdef __ANDROID__
+int gettimeofday(struct timeval *tv, struct timezone *tz)
+#else
 int gettimeofday(struct timeval *tv, void *tz)
+#endif
 #endif
 {
   int result;
@@ -2851,6 +2960,8 @@ static void ftpl_really_init(void)
 
 #ifdef __APPLE__
   const char *progname = getprogname();
+#elif defined(__ANDROID__)
+  const char *progname = getprogname();
 #else
   const char *progname = __progname;
 #endif
@@ -2864,22 +2975,28 @@ static void ftpl_really_init(void)
   real_stat =               dlsym(RTLD_NEXT, "stat");
   real_lstat =              dlsym(RTLD_NEXT, "lstat");
   real_fstat =              dlsym(RTLD_NEXT, "fstat");
+#ifndef __ANDROID__
   real_xstat =              dlsym(RTLD_NEXT, "__xstat");
   real_fxstat =             dlsym(RTLD_NEXT, "__fxstat");
   real_fxstatat =           dlsym(RTLD_NEXT, "__fxstatat");
   real_lxstat =             dlsym(RTLD_NEXT, "__lxstat");
+#endif
 #if !defined(__APPLE__) || !__DARWIN_ONLY_64_BIT_INO_T
+#ifndef __ANDROID__
   real_stat64 =             dlsym(RTLD_NEXT, "stat64");
   real_xstat64 =            dlsym(RTLD_NEXT,"__xstat64");
   real_fxstat64 =           dlsym(RTLD_NEXT, "__fxstat64");
   real_fxstatat64 =         dlsym(RTLD_NEXT, "__fxstatat64");
   real_lxstat64 =           dlsym(RTLD_NEXT, "__lxstat64");
 #endif
+#endif
 #ifdef STATX_TYPE
   real_statx =              dlsym(RTLD_NEXT, "statx");
 #endif
   real_time =               dlsym(RTLD_NEXT, "time");
+#ifndef __ANDROID__
   real_ftime =              dlsym(RTLD_NEXT, "ftime");
+#endif
 #ifdef TIME_UTC
   real_timespec_get =       dlsym(RTLD_NEXT, "timespec_get");
 #endif
@@ -2913,10 +3030,14 @@ static void ftpl_really_init(void)
   real_pselect =            dlsym(RTLD_NEXT, "pselect");
 #endif
   real_sem_timedwait =      dlsym(RTLD_NEXT, "sem_timedwait");
+#ifndef __ANDROID__
   real_sem_clockwait =      dlsym(RTLD_NEXT, "sem_clockwait");
 #endif
+#endif
 #ifdef FAKE_INTERNAL_CALLS
+#ifndef __ANDROID__
   real___ftime =              dlsym(RTLD_NEXT, "__ftime");
+#endif
 #  if defined(__alpha__) && defined(__GLIBC__)
   real___gettimeofday =       dlvsym(RTLD_NEXT, "__gettimeofday", "GLIBC_2.1");
 #  else
@@ -2985,6 +3106,7 @@ static void ftpl_really_init(void)
     real_timer_gettime_233 =  dlsym(RTLD_NEXT, "timer_gettime");
     real_timer_settime_233 =  dlsym(RTLD_NEXT, "timer_settime");
 #else
+#ifndef __ANDROID__
 #ifdef __GLIBC__
   real_timer_settime_22 =   dlvsym(RTLD_NEXT, "timer_settime","GLIBC_2.2");
   real_timer_settime_233 =  dlvsym(RTLD_NEXT, "timer_settime","GLIBC_2.3.3");
@@ -3001,6 +3123,10 @@ static void ftpl_really_init(void)
   {
     real_timer_gettime_233 =  dlsym(RTLD_NEXT, "timer_gettime");
   }
+#else
+  real_timer_settime_233 =  dlsym(RTLD_NEXT, "timer_settime");
+  real_timer_gettime_233 =  dlsym(RTLD_NEXT, "timer_gettime");
+#endif
 #endif
 #ifdef __linux__
   real_timerfd_gettime =  dlsym(RTLD_NEXT, "timerfd_gettime");
@@ -3859,6 +3985,7 @@ time_t __time(time_t *time_tptr)
   return tp.tv_sec;
 }
 
+#ifndef __ANDROID__
 int __ftime(struct timeb *tb)
 {
   struct timespec tp;
@@ -3890,6 +4017,7 @@ int __ftime(struct timeb *tb)
   /* return the result to the caller */
   return result; /* will always be 0 (see manpage) */
 }
+#endif /* __ANDROID__ */
 
 #endif
 
@@ -4161,6 +4289,12 @@ int pthread_cond_timedwait_232(pthread_cond_t *cond, pthread_mutex_t *mutex, con
   return pthread_cond_timedwait_common(cond, mutex, abstime, FT_COMPAT_GLIBC_2_3_2);
 }
 
+#ifdef __ANDROID__
+int pthread_cond_timedwait(pthread_cond_t *cond, pthread_mutex_t *mutex, const struct timespec *abstime)
+{
+  return pthread_cond_timedwait_common(cond, mutex, abstime, FT_COMPAT_GLIBC_2_3_2);
+}
+#else
 __asm__(".symver pthread_cond_timedwait_225, pthread_cond_timedwait@GLIBC_2.2.5");
 #if defined __ARM_ARCH || defined FORCE_PTHREAD_NONVER
 __asm__(".symver pthread_cond_timedwait_232, pthread_cond_timedwait@@");
@@ -4171,6 +4305,7 @@ __asm__(".symver pthread_cond_timedwait_232, pthread_cond_timedwait@@GLIBC_2.3.2
 __asm__(".symver pthread_cond_init_232, pthread_cond_init@@GLIBC_2.3.2");
 __asm__(".symver pthread_cond_destroy_232, pthread_cond_destroy@@GLIBC_2.3.2");
 #endif
+#endif /* __ANDROID__ */
 
 #endif
 
@@ -4399,7 +4534,7 @@ pid_t getpid() {
 
 #ifdef INTERCEPT_SYSCALL
 #ifdef INTERCEPT_FUTEX
-static inline long make_futex_syscall(long number, uint32_t* uaddr, int futex_op, uint32_t val, struct timespec* timeout, uint32_t* uaddr2, uint32_t val3) { 
+static inline long make_futex_syscall(long number, uint32_t* uaddr, int futex_op, uint32_t val, struct timespec* timeout, uint32_t* uaddr2, uint32_t val3) {
   if (timeout == NULL) {
     // not timeout related, just call the real syscall
     return real_syscall(number, uaddr, futex_op, val, timeout, uaddr2, val3);
@@ -4487,13 +4622,13 @@ static inline long handle_futex_syscall(long number, uint32_t* uaddr, int futex_
   } else if (futex_cmd == FUTEX_WAIT) {
     // FUTEX_WAIT uses relative timeout - scale by time rate
     struct timespec adjusted_timeout;
-    
+
     if (user_rate_set && !dont_fake && ((clk_id == CLOCK_REALTIME) || (clk_id == CLOCK_MONOTONIC))) {
       timespecmul(timeout, 1.0 / user_rate, &adjusted_timeout);
     } else {
       adjusted_timeout = *timeout;
     }
-    
+
     return make_futex_syscall(number, uaddr, futex_op, val, &adjusted_timeout, uaddr2, val3);
   } else {
     // Other futex operations - pass through unchanged

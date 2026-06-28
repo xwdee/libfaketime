@@ -95,11 +95,6 @@
 #         - avoid that the faketime wrapper complains when running within a
 #           libfaketime environment
 #
-#     FAIL_PRE_INIT_CALLS
-#         - If the time is queried before the library was initialised, let the
-#           call fail instead of trying to initialise on-the-fly. This fixes /
-#           works around hangs that were seen with address sanitizer.
-#
 #   * Compilation addition: second libMT target added for building the pthread-
 #     enabled library as a separate library
 #
@@ -126,6 +121,14 @@ PREFIX ?= /usr/local
 LIBDIRNAME ?= /lib/faketime
 PLATFORM ?=$(shell uname)
 
+ifneq ($(filter android%,$(subst -, ,$(CC))),)
+IS_ANDROID := true
+endif
+
+ifeq ($(shell $(CC) -dM -E - < /dev/null | grep -c "__ANDROID__"),1)
+IS_ANDROID := true
+endif
+
 ifeq ($(shell $(CC) -v 2>&1 | grep -c "clang version"), 1)
 COMPILER := clang
 else
@@ -147,15 +150,26 @@ ifeq ($(PLATFORM),SunOS)
 CFLAGS += -D__EXTENSIONS__ -D_XOPEN_SOURCE=600
 endif
 
+ifdef IS_ANDROID
+CFLAGS += -D__ANDROID__
+endif
+
 LIB_LDFLAGS += -shared
 
 LDFLAGS += $(FAKETIME_LINK_FLAGS)
 ifneq ($(PLATFORM),SunOS)
+ifndef IS_ANDROID
 LDFLAGS += -Wl,--version-script=libfaketime.map
 endif
+endif
 
+ifdef IS_ANDROID
+LDADD += -ldl -lm
+BIN_LDFLAGS +=
+else
 LDADD += -ldl -lm -lrt -lpthread
 BIN_LDFLAGS += -lrt -lpthread
+endif
 
 SRC = libfaketime.c
 LIBS_OBJ = libfaketime.o libfaketimeMT.o

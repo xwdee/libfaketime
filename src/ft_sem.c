@@ -73,7 +73,14 @@ static int ft_sem_name_to_path(const char *name, char *path, size_t pathlen)
     return -1;
   }
   const char *pid_str = p + strlen(prefix);
-  snprintf(path, pathlen, "/dev/shm/faketime_lock_%s", pid_str);
+  const char *tmpdir;
+#ifdef __ANDROID__
+  tmpdir = getenv("TMPDIR");
+  if (tmpdir == NULL) tmpdir = "/data/local/tmp";
+#else
+  tmpdir = "/dev/shm";
+#endif
+  snprintf(path, pathlen, "%s/faketime_lock_%s", tmpdir, pid_str);
   path[pathlen - 1] = '\0';
   return 0;
 }

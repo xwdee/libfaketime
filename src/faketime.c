@@ -46,6 +46,7 @@
 #include <sys/mman.h>
 #include "ft_sem.h"
 
+#include "android_compat.h"
 #include "faketime_common.h"
 
 const char version[] = "0.9.12";
